@@ -1581,7 +1581,7 @@ frontend/dist/
 
 `dist/` is **generated output**, not source. It is listed in `.gitignore` and is never committed —
 Netlify and Vercel rebuild it from source on every push. The filenames contain a content hash
-(`index-W7npi5gf.js`), so the filename changes whenever the content changes, which is how the
+(`index-DypnbcgB.js`), so the filename changes whenever the content changes, which is how the
 browser cache is invalidated.
 
 > **Teaching point:** the "dist" name is the same convention as `dist/` in webpack, Angular and
@@ -1638,6 +1638,14 @@ Then in Netlify:
    `https://<your-backend>.onrender.com`.
 4. **Deploy site.** Every push to `main` triggers a rebuild.
 
+> **Import the project, do not drag-and-drop a folder.** Netlify's "Deploy manually" (the
+> `netlify deploy` CLI, or dropping a zip on the site page) uploads a **snapshot of your machine**:
+> it works, but the site is then disconnected from GitHub, no push ever rebuilds it, and a teammate
+> cannot reproduce it. The build log tells you which one you did — a manual upload says
+> *"Fetching build zip file"*, a GitHub build says *"Cloning repository"*. If you see the former,
+> connect the site to the repo instead: **Site configuration → Build & deploy → Continuous
+> deployment → Connect to GitHub**.
+
 ### Step 11.4 — Deploy the frontend to Vercel instead
 
 1. **Add New → Project** → import the repo.
@@ -1666,6 +1674,7 @@ services:
   - type: web
     name: todo-backend
     runtime: node
+    plan: free
     rootDir: backend
     buildCommand: npm install
     startCommand: npm start
@@ -1686,6 +1695,39 @@ committed to Git. Paste your MongoDB Atlas URI into the Render dashboard.
 `healthCheckPath: /health` matters more than it looks. Render polls that URL to decide whether the
 service is alive. Point it at `/todo` and a database outage looks like a healthy service that
 returns 500s; point it at `/health` and the platform sees a **503** and replaces the instance.
+
+#### Creating the service, click by click
+
+1. **https://dashboard.render.com → New → Blueprint.**
+2. **Connect GitHub.** Render asks for GitHub authorisation — grant it access to the repo
+   `Sairampv98/my-todo` (or your fork). *This step is why the repository must be pushed to GitHub
+   before you start: a Blueprint is nothing more than `render.yaml` read from the repo.*
+3. **Choose the repository** from the list. Render reads `render.yaml` and shows one service,
+   `todo-backend`, with every field already filled in — you do not type a build command.
+4. **Render asks for the `MONGO_URI` value**, because the file says `sync: false`. Paste the exact
+   value from your local `.env` (the part after `MONGO_URI=`). Using the string you already
+   verified locally removes a whole class of "but the password is right" arguments.
+5. **Apply.** The build starts, the deploy follows, and the service goes live as
+   `https://todo-backend.onrender.com`.
+6. **Check it immediately:**
+   ```bash
+   curl https://todo-backend.onrender.com/health
+   # {"status":"ok","database":"connected"}
+   ```
+   On the free plan the first request after a period of inactivity can take **30–50 seconds** while
+   the instance spins up. That is the free tier, not a hang.
+
+> **If `/health` returns `503` or the log says `Could not reach the database. Giving up.`,** the
+> backend is up and the *database* is the problem. Check the Atlas **Network Access** list
+> (`0.0.0.0/0`) and the URL-encoded password. Do not start changing frontend variables — the
+> frontend is not involved yet.
+
+> **The build log is short and it is all you need.** You should see `npm install`, then
+> `> backend@1.0.0 start` and `> node src/server.js`, then `Server is running on port 8001`. If the
+> log instead says `Cannot find module 'mongoose'`, the install did not pick up the workspace —
+> check that the root `package.json` (the one with `"workspaces"`) is actually in the repo. With
+> `rootDir: backend`, npm still installs the whole workspace tree at the repository root, and Node
+> finds it by walking up from `backend/src`.
 
 ### Step 11.6 — The MongoDB piece
 
@@ -1794,6 +1836,9 @@ const API = `${import.meta.env.VITE_API_URL || "http://localhost:8001"}/todo`;
 | You changed `VITE_API_URL` and nothing happened | Vite inlines `VITE_` variables at **build** time. A restart is not enough — the site must be **rebuilt** | Trigger a new deploy (push a commit, or Netlify → *Deploys* → *Retry deploy*) |
 | The variable is set but the build still uses localhost | It was added only in the **Runtime** scope | Netlify: set it with the **Builds, Functions, Runtime** scope selected |
 | `MONGODB_URI` is set on Netlify | Wrong **name** and wrong **host** | The backend reads `MONGO_URI`. Put it in **Render**, and delete it from Netlify |
+| The Netlify build log says *Fetching build zip file* instead of *Cloning repository* | The site was deployed by uploading a folder from your machine, so it is not connected to GitHub and no push will ever rebuild it | **Site configuration → Build & deploy → Continuous deployment → Connect to GitHub**, then redeploy |
+| The Render build log says `Cannot find module 'mongoose'` | The root `package.json` (the one with `"workspaces"`) was never pushed, so npm could not install the backend's dependencies into the workspace | Commit and push the root `package.json` and `package-lock.json`, then trigger a new Render deploy |
+| The Render service is live but `/health` returns `503` | The instance started, but it cannot reach Atlas | Check the Atlas **Network Access** list (`0.0.0.0/0`) and the URL-encoded password |
 | `MongooseServerSelectionError` in the Render logs | `MONGO_URI` missing, renamed, or the password is not URL-encoded | Rename to `MONGO_URI`; percent-encode the password |
 | Render logs: `Could not reach the database. Giving up.` | Atlas refused the connection | Check the Atlas **IP Access List** and the encoded password |
 | CORS error in the browser console on the deployed site | `app.use(cors())` is missing or below the router | It must be registered **before** `app.use("/todo", router)` |
