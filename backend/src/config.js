@@ -43,9 +43,17 @@ if (dnsServers.length > 0) {
  * a replica-set discovery round trip - and the cluster can be briefly
  * unreachable while it fails over. So we retry a few times before giving up.
  *
- * @param {number} maxRetries how many attempts to make before exiting
+ * @param {number} maxRetries how many attempts to make before giving up
+ * @param {object} options
+ * @param {boolean} options.exitOnFailure call process.exit(1) when the retries
+ *   run out. A normal server wants that - it must not pretend to be healthy.
+ *   A serverless function does not: it must be able to answer the request with
+ *   a 503 instead of being killed mid-flight.
  */
-export const connectDB = async (maxRetries = 5) => {
+export const connectDB = async (
+    maxRetries = 5,
+    { exitOnFailure = true } = {}
+) => {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             await mongoose.connect(process.env.MONGO_URI, {
@@ -63,7 +71,10 @@ export const connectDB = async (maxRetries = 5) => {
 
             if (attempt === maxRetries) {
                 console.error("Could not reach the database. Giving up.");
-                process.exit(1);
+                if (exitOnFailure) {
+                    process.exit(1);
+                }
+                throw new Error("Could not reach the database.");
             }
 
             // Linear backoff: wait 2s, then 4s, then 6s...

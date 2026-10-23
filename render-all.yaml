@@ -1,0 +1,37 @@
+# Render deployment - the WHOLE application on one Render service.
+#
+# This is "everything on one host" (Strategy 2 in docs/DEPLOYMENT-STRATEGIES.md).
+# One service, one URL, one dashboard entry:
+#
+#   https://todo-backend.onrender.com/          -> the React app
+#   https://todo-backend.onrender.com/health    -> the health check
+#   https://todo-backend.onrender.com/todo      -> the API
+#
+# The build compiles the frontend into frontend/dist, and the Express server
+# serves that folder from the same origin as the API. Because the browser
+# never makes a cross-origin request, there is no CORS to configure and no
+# VITE_API_URL to get wrong.
+#
+# Compare with render.yaml (Strategy 3), where Render hosts only the API and
+# Netlify hosts the frontend. Create the Blueprint from the repository and set
+# "Blueprint path" to render-all.yaml - Render defaults to render.yaml.
+#
+# MONGO_URI is deliberately NOT hardcoded: set it in the Render dashboard
+# (Environment tab) to your MongoDB Atlas connection string. sync: false means
+# Render will prompt you for the value instead of taking it from this file.
+
+services:
+  - type: web
+    name: todo-backend
+    runtime: node
+    plan: free
+    # No rootDir: the build has to run at the repository root, because it both
+    # installs the workspace and compiles the frontend.
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: MONGO_URI
+        sync: false

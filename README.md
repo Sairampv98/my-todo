@@ -129,27 +129,34 @@ Database `todo`, collection `todo`.
 
 ```
 my-todo-app/
-├── .env                        # MONGO_URI (root level)
-├── .env.example                # the same key, no secrets — committed
+├── .env                        # MONGO_URI + DNS_SERVERS (root level)
+├── .env.example                # the same keys, no secrets — committed
 ├── .gitignore
 ├── package.json                # ROOT package — npm workspaces + scripts
 ├── package-lock.json           # ONE lockfile for both workspaces
-├── netlify.toml                # Netlify build config (frontend)
-├── render.yaml                 # Render blueprint (backend)
+├── netlify.toml                # Netlify build config (frontend + optional Function)
+├── render.yaml                 # Render blueprint — backend only (split strategy)
+├── render-all.yaml             # Render blueprint — whole app on one service
 ├── README.md                   # this file
 ├── RECREATE.md                 # step-by-step build guide (teaching document)
 ├── docs/
-│   ├── INTERVIEW-PREP.md       # 153 Q&A — MERN + GenAI trainer interview
-│   └── SYLLABUS-MAPPING.md     # module-by-module handout
+│   ├── DEPLOYMENT-STRATEGIES.md # the three deployment topologies, compared
+│   ├── INTERVIEW-PREP.md        # 153 Q&A — MERN + GenAI trainer interview
+│   └── SYLLABUS-MAPPING.md      # module-by-module handout
+├── tools/
+│   └── function-smoke-test.mjs  # exercises the Netlify Function handler locally
 ├── node_modules/               # installed once, shared by both workspaces
 ├── backend/
 │   └── src/
-│       ├── config.js           # MongoDB connection (env var)
+│       ├── config.js           # MongoDB connection (env var) + retry/backoff
 │       ├── controller.js       # request handlers
 │       ├── routes.js           # URL → handler map
 │       ├── server.js           # express app, middleware, port 8001
 │       └── Todo.js             # Mongoose schema + model
 └── frontend/
+    ├── netlify/
+    │   └── functions/
+    │       └── api.js           # the Express app as a Netlify Function
     ├── vercel.json             # Vercel build config
     ├── vite.config.js
     └── src/
@@ -173,6 +180,35 @@ GitHub ──► Netlify (frontend/dist)  ──VITE_API_URL──►  Render (E
 | Frontend (alt) | `frontend/vercel.json` | Vercel — Root Directory = `frontend` | `VITE_API_URL` = the backend origin |
 | Backend | `render.yaml` (root) | Render — Root Directory `backend`, start `npm start` | `MONGO_URI` = your Atlas SRV string, in Render's dashboard (**not** in the repo) |
 | Database | — | MongoDB Atlas (free M0) | user + password, network access `0.0.0.0/0` |
+
+### Three strategies, one codebase
+
+The setup above is one of three that this repo supports. The others exist so
+you can teach *why* the split is the right default, and what it costs.
+
+| | **1 — Everything on Netlify** | **2 — Everything on Render** | **3 — Split (above)** |
+| --- | --- | --- | --- |
+| Backend runs as | a Netlify **Function** (serverless) | an Express service that also serves the built frontend | an Express service on Render |
+| Frontend calls | `/api/todo` (same origin) | `/todo` (same origin) | `https://<backend>.onrender.com/todo` |
+| CORS needed? | No | No | **Yes** |
+| `VITE_API_URL` | `/api` | not needed at all | the backend origin |
+| `MONGO_URI` lives on | Netlify | Render | Render |
+| Config | `netlify.toml` | `render-all.yaml` | `netlify.toml` + `render.yaml` |
+
+Strategy 1 teaches **serverless constraints** (10-second limit, no state
+between requests, connection pools). Strategy 2 teaches **same-origin design**
+(CORS disappears). Strategy 3 teaches **build-time configuration** — the
+`VITE_API_URL` trap that breaks the most students.
+
+Full walkthroughs, verification steps and the honest trade-offs:
+[`docs/DEPLOYMENT-STRATEGIES.md`](docs/DEPLOYMENT-STRATEGIES.md).
+
+> Strategy 1 is the only one that needs the backend's code to be importable
+> without starting a server. `backend/src/server.js` therefore exports the
+> Express `app` and only calls `app.listen()` when it is the entry point, and
+> it connects to the database lazily (a serverless instance has no startup).
+> `tools/function-smoke-test.mjs` exercises that handler locally:
+> `node tools/function-smoke-test.mjs`.
 
 **Two variables, two different hosts — do not mix them up:**
 
@@ -199,7 +235,7 @@ npm run build     # → frontend/dist/  (this is what Netlify publishes)
 > — you should see only `onrender.com`.
 >
 > **The bundle filename is the proof.** Vite hashes the output, so the file name tells you whether
-> the variable arrived: a build with no `VITE_API_URL` produces `assets/index-DypnbcgB.js`, and a
+> the variable arrived: a build with no `VITE_API_URL` produces `assets/index-DgzIgNtx.js`, and a
 > build with it produces a different name. The Netlify build log prints that name — if it matches
 > the "no variable" one, the variable never reached the build.
 >
@@ -239,6 +275,7 @@ Full walkthrough with the Atlas steps and the deployment troubleshooting table:
 | Document | What it is for |
 | -------- | -------------- |
 | [`RECREATE.md`](RECREATE.md) | **Start here to teach.** Full build-from-zero guide: architecture, every file's exact code, the 11 defects in the original draft (with the symptom each one caused), a 30-hour session plan, module mapping, troubleshooting table, deployment walkthrough and viva questions. |
+| [`docs/DEPLOYMENT-STRATEGIES.md`](docs/DEPLOYMENT-STRATEGIES.md) | The three deployment topologies — everything on Netlify (serverless functions), everything on Render (one origin, no CORS), and the split across two hosts — with the configuration each one needs and the concept each one teaches. |
 | [`docs/INTERVIEW-PREP.md`](docs/INTERVIEW-PREP.md) | 153 interview questions with model answers — MERN fundamentals, React, MongoDB, Express, GenAI, RAG, teaching methodology, live coding, deployment and HR. |
 | [`docs/SYLLABUS-MAPPING.md`](docs/SYLLABUS-MAPPING.md) | The 7 course modules mapped hour-by-hour onto this codebase. |
 

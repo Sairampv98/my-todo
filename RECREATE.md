@@ -361,9 +361,17 @@ if (dnsServers.length > 0) {
  * a replica-set discovery round trip - and the cluster can be briefly
  * unreachable while it fails over. So we retry a few times before giving up.
  *
- * @param {number} maxRetries how many attempts to make before exiting
+ * @param {number} maxRetries how many attempts to make before giving up
+ * @param {object} options
+ * @param {boolean} options.exitOnFailure call process.exit(1) when the retries
+ *   run out. A normal server wants that - it must not pretend to be healthy.
+ *   A serverless function does not: it must be able to answer the request with
+ *   a 503 instead of being killed mid-flight.
  */
-export const connectDB = async (maxRetries = 5) => {
+export const connectDB = async (
+    maxRetries = 5,
+    { exitOnFailure = true } = {}
+) => {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             await mongoose.connect(process.env.MONGO_URI, {
@@ -381,7 +389,10 @@ export const connectDB = async (maxRetries = 5) => {
 
             if (attempt === maxRetries) {
                 console.error("Could not reach the database. Giving up.");
-                process.exit(1);
+                if (exitOnFailure) {
+                    process.exit(1);
+                }
+                throw new Error("Could not reach the database.");
             }
 
             // Linear backoff: wait 2s, then 4s, then 6s...
@@ -577,6 +588,9 @@ Teaching points to extract from this file:
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import router from "./routes.js";
 import dotenv from "dotenv";
 import { connectDB } from "./config.js";
@@ -586,12 +600,44 @@ dotenv.config();
 
 const app = express();
 
+// CORS: the React app runs on http://localhost:5173 and the API on :8001.
+// Without this, the browser blocks every fetch as a cross-origin request.
+// (When the frontend and the API are served from the SAME origin - Strategy 2 -
+// this is a no-op, because there is no cross-origin request to block.)
+app.use(cors());
+
+// Middleware: lets Express parse a JSON body (req.body) for POST/PUT.
+app.use(express.json());
+
+// The compiled React app, if it has been built.
+//
+// `npm run build` writes it to frontend/dist. When that folder exists we
+// serve it from the same origin as the API, which means the browser never
+// makes a cross-origin request: no CORS, and no VITE_API_URL to get wrong.
+// This is what lets ONE Render service host the entire application.
+//
+// If the folder is not there - local development, where Vite serves the app
+// instead, or a backend-only deploy - this simply does nothing.
+const distPath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../frontend/dist"
+);
+
+const hasBuiltFrontend = fs.existsSync(path.join(distPath, "index.html"));
+
+if (hasBuiltFrontend) {
+    app.use(express.static(distPath));
+}
+
 // A friendly root route.
 //
 // Without this, opening the deployed URL in a browser shows Express's bare
 // "Cannot GET /" 404 page - which looks like a broken deployment even when
 // the server is perfectly healthy. This route turns that moment into a
 // confirmation, and it tells the visitor exactly where the API lives.
+//
+// When the built frontend is being served, the static handler above already
+// answered "/" with index.html, so this JSON is the API-only answer.
 app.get("/", (req, res) => {
     res.status(200).json({
         service: "todo-backend",
@@ -603,12 +649,42 @@ app.get("/", (req, res) => {
     });
 });
 
-// CORS: the React app runs on http://localhost:5173 and the API on :8001.
-// Without this, the browser blocks every fetch as a cross-origin request.
-app.use(cors());
+/**
+ * Connect to the database once, and reuse that promise.
+ *
+ * A normal server connects at startup and then stays connected for hours. A
+ * serverless function has no startup at all: it is created for one request,
+ * used, and thrown away. So the connection is made lazily, on the first
+ * request, and the promise is cached - a warm instance reuses the connection
+ * pool it already has instead of opening a new one for every request.
+ */
+let dbPromise = null;
 
-// Middleware: lets Express parse a JSON body (req.body) for POST/PUT.
-app.use(express.json());
+const ensureDB = () => {
+    if (!dbPromise) {
+        // exitOnFailure: false - a function must be able to answer with a 503
+        // rather than being killed mid-request.
+        dbPromise = connectDB(5, { exitOnFailure: false });
+    }
+    return dbPromise;
+};
+
+// Make sure the database is connected before any route handler runs.
+// It sits ABOVE /health on purpose: a health check that reports "disconnected"
+// on a cold serverless instance would be reporting the cold start, not the
+// truth. Here the first call waits for the connection and then reports it.
+app.use(async (req, res, next) => {
+    try {
+        await ensureDB();
+        next();
+    } catch (error) {
+        res.status(503).json({
+            status: "degraded",
+            database: "unreachable",
+            error: error.message,
+        });
+    }
+});
 
 // Health check. The hosting platform (Render) polls this to decide whether
 // the service is up. It also reports the database state, so a service that is
@@ -627,6 +703,18 @@ app.get("/health", (req, res) => {
 // Mount the router. Every route inside it is prefixed with /todo.
 app.use("/todo", router);
 
+// Single-page application fallback.
+//
+// Registered LAST, so it can only be reached by a path that is not an API
+// route: the router above has already answered everything under /todo, and
+// /health has already answered itself. Anything left is a client-side route,
+// and the React app should handle it.
+if (hasBuiltFrontend) {
+    app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+    });
+}
+
 /**
  * Start the server ONLY after the database is connected.
  *
@@ -636,17 +724,32 @@ app.use("/todo", router);
  * MongoDB the window is tiny; against MongoDB Atlas it is several seconds.
  */
 const start = async () => {
-    await connectDB();
+    await ensureDB();
 
     app.listen(8001, () => {
         console.log("Server is running on port 8001");
     });
 };
 
-start().catch((error) => {
-    console.error("Failed to start the server:", error.message);
-    process.exit(1);
-});
+// Export the app so a serverless function can wrap it.
+// See netlify/functions/api.js for the "everything on Netlify" strategy.
+export { app, ensureDB };
+
+// Run the server ONLY when this file is the entry point.
+//
+//   node src/server.js        -> entry point  -> start listening on 8001
+//   a Netlify Function imports it -> not the entry point -> no listener,
+//   because the function runtime supplies the HTTP request instead.
+const isEntryPoint =
+    process.argv[1] &&
+    path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+
+if (isEntryPoint) {
+    start().catch((error) => {
+        console.error("Failed to start the server:", error.message);
+        process.exit(1);
+    });
+}
 ```
 
 Read this file as a **middleware pipeline** — that is exactly how Module 3 frames it:
@@ -909,16 +1012,21 @@ import './App.css';
 
 // The API base URL.
 //
-// Locally it falls back to the Express server on port 8001. In production you
-// set VITE_API_URL to the ORIGIN of the deployed backend, for example
-// https://todo-backend.onrender.com - the app appends /todo itself, so the
-// variable never needs a path.
+// Locally it falls back to the Express server on port 8001. In production the
+// value of VITE_API_URL decides who serves the API:
+//
+//   https://todo-backend.onrender.com  ->  the API runs on Render
+//   /api                                 ->  the API runs as a Netlify
+//                                           Function on this same site
+//
+// So the variable can be an absolute origin OR a path on this same origin.
+// The app appends /todo itself, so the variable never needs the route.
 //
 // Vite inlines VITE_ variables at BUILD time. So the variable must exist in
 // the hosting platform's build environment, and the site must be REBUILT after
 // you add or change it. Setting it only in the "Runtime" scope is not enough.
-const API_BASE = import.meta.env.VITE_API_URL;
-const API = `${API_BASE || "http://localhost:8001"}/todo`;
+const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8001";
+const API = `${API_BASE}/todo`;
 
 // A missing build-time variable is invisible until someone loads the page and
 // sees an empty list. In a production build, no VITE_API_URL means the app is
@@ -1609,7 +1717,7 @@ frontend/dist/
 
 `dist/` is **generated output**, not source. It is listed in `.gitignore` and is never committed —
 Netlify and Vercel rebuild it from source on every push. The filenames contain a content hash
-(`index-DypnbcgB.js`), so the filename changes whenever the content changes, which is how the
+(`index-DgzIgNtx.js`), so the filename changes whenever the content changes, which is how the
 browser cache is invalidated.
 
 > **Teaching point:** the "dist" name is the same convention as `dist/` in webpack, Angular and
@@ -1694,6 +1802,11 @@ serverless functions, host the back-end elsewhere and proxy to it, or host the w
 > the machine in front of the class, and the whole thing costs nothing. It also produces the most
 > instructive failure of the course — when the laptop sleeps, the site breaks, and the students see
 > that a "deployed" frontend still depends on something being alive somewhere.
+>
+> **All three topologies are in this kit.** The split above is only one of them.
+> [`docs/DEPLOYMENT-STRATEGIES.md`](docs/DEPLOYMENT-STRATEGIES.md) works through all three —
+> everything on Netlify (serverless functions), everything on Render (one origin, no CORS), and this
+> split — with the configuration each one needs and the concept each one teaches.
 
 ### Step 11.3 — Deploy the frontend to Netlify
 
@@ -1956,8 +2069,9 @@ variable reached the build**:
 
 | Build | Output file |
 | ----- | ----------- |
-| No `VITE_API_URL` (the broken case) | `assets/index-DypnbcgB.js` |
-| `VITE_API_URL=https://todo-backend.onrender.com` | `assets/index-BJF5kXxr.js` |
+| No `VITE_API_URL` (the broken case) | `assets/index-DgzIgNtx.js` |
+| `VITE_API_URL=https://todo-backend.onrender.com` (Strategy 3) | `assets/index-M9RzJEpk.js` |
+| `VITE_API_URL=/api` (Strategy 1, the API is a Function on the same site) | `assets/index-BIJZ_dC3.js` |
 
 The Netlify build log prints the same line. If your log shows the *no-variable* filename, the
 variable never reached the build — no amount of redeploying without setting it will help. Compare

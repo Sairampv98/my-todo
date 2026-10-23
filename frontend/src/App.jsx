@@ -5,16 +5,21 @@ import './App.css';
 
 // The API base URL.
 //
-// Locally it falls back to the Express server on port 8001. In production you
-// set VITE_API_URL to the ORIGIN of the deployed backend, for example
-// https://todo-backend.onrender.com - the app appends /todo itself, so the
-// variable never needs a path.
+// Locally it falls back to the Express server on port 8001. In production the
+// value of VITE_API_URL decides who serves the API:
+//
+//   https://todo-backend.onrender.com  ->  the API runs on Render
+//   /api                                 ->  the API runs as a Netlify
+//                                           Function on this same site
+//
+// So the variable can be an absolute origin OR a path on this same origin.
+// The app appends /todo itself, so the variable never needs the route.
 //
 // Vite inlines VITE_ variables at BUILD time. So the variable must exist in
 // the hosting platform's build environment, and the site must be REBUILT after
 // you add or change it. Setting it only in the "Runtime" scope is not enough.
-const API_BASE = import.meta.env.VITE_API_URL;
-const API = `${API_BASE || "http://localhost:8001"}/todo`;
+const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8001";
+const API = `${API_BASE}/todo`;
 
 // A missing build-time variable is invisible until someone loads the page and
 // sees an empty list. In a production build, no VITE_API_URL means the app is

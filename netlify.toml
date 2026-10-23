@@ -1,11 +1,38 @@
-# Netlify deployment - the React frontend only.
+# Netlify deployment - the React frontend, and optionally the Express API as a
+# Netlify Function.
 #
-# Netlify reads this file automatically when you connect the repository.
-# The backend is NOT deployed here - it runs on Render (see render.yaml).
+# This ONE file serves two of the three deployment strategies
+# (see docs/DEPLOYMENT-STRATEGIES.md):
 #
-# Netlify runs the build command INSIDE the base directory, and resolves the
-# publish directory RELATIVE TO THE BASE DIRECTORY. So with base = "frontend"
-# and publish = "dist", Netlify publishes frontend/dist.
+#   Strategy 1 - "everything on Netlify": the static frontend below, plus the
+#                API as a Netlify Function
+#                (frontend/netlify/functions/api.js). Set VITE_API_URL=/api and
+#                add MONGO_URI to Netlify.
+#
+#   Strategy 3 - "split across two hosts": the static frontend below, with the
+#                API running on Render (see render.yaml). Set
+#                VITE_API_URL=https://<your-backend>.onrender.com and do NOT
+#                put MONGO_URI on Netlify.
+#
+# The only difference is the value of VITE_API_URL - and whether the database
+# URI stays on Netlify. The build itself is identical.
+#
+# Why the function lives under frontend/ : Netlify resolves the FUNCTIONS
+# DIRECTORY relative to the BASE DIRECTORY. With base = "frontend" that is
+# frontend/netlify/functions - so the function file goes there, and it reaches
+# the backend code three levels up.
+#
+# The publish directory is relative to the base directory too, so with
+# base = "frontend" it must be "dist" (which resolves to frontend/dist).
+# Writing "frontend/dist" here would make Netlify look for
+# frontend/frontend/dist and fail with *publish directory not found*.
+#
+# ONE WARNING ABOUT THE BASE DIRECTORY
+# This repository is an npm workspace, and Netlify detects that. In the Netlify
+# UI, set the site's BASE DIRECTORY to the repository root (or leave it unset
+# and let this file's base = "frontend" apply) - do NOT pick the "frontend"
+# workspace as a separate project. If you do, the base directory is applied a
+# second time and the build looks for frontend/frontend and fails.
 
 [build]
   base = "frontend"
@@ -14,6 +41,22 @@
 
 [build.environment]
   NODE_VERSION = "22"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+  # These are installed in the workspace root, not in the function folder,
+  # so Netlify has to be told to include them explicitly.
+  external_node_modules = ["express", "serverless-http"]
+
+# The API. Every /api/* request is handed to the Express app running as a
+# Netlify Function. This rule MUST come before the SPA rule below, because
+# Netlify applies the first matching redirect.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
 
 # Single-page application: every unknown path is served by index.html so that
 # React Router routes (added in Module 6) work on a hard refresh.
