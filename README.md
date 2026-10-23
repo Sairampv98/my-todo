@@ -92,6 +92,7 @@ Base URL: `http://localhost:8001/todo`
 
 | Method | Path        | Body                         | Success | Response                          |
 | ------ | ----------- | ---------------------------- | ------- | --------------------------------- |
+| GET    | `/`         | —                            | 200     | `{"service":"todo-backend","status":"running","endpoints":{...}}` |
 | GET    | `/health`   | —                            | 200     | `{"status":"ok","database":"connected"}` (503 if the DB is down) |
 | GET    | `/todo`     | —                            | 200     | array of todos                    |
 | GET    | `/todo/:id` | —                            | 200     | one todo                          |
@@ -100,6 +101,10 @@ Base URL: `http://localhost:8001/todo`
 | DELETE | `/todo/:id` | —                            | 200     | `{"message":"Deleted selected todo"}` |
 
 Unknown id → `404 {"message":"Todo not found"}`.
+
+> **"Cannot GET /" means the server is fine.** Express's default 404 for an unmounted path — the
+> router is mounted at `/todo`. Check `/health`. This build also serves a small JSON at `/` so the
+> root URL confirms itself.
 
 > **The server waits for the database before it starts listening.** `await connectDB()` runs before
 > `app.listen(8001)`, so a request can never arrive while Mongoose is still connecting — which is

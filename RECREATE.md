@@ -586,6 +586,23 @@ dotenv.config();
 
 const app = express();
 
+// A friendly root route.
+//
+// Without this, opening the deployed URL in a browser shows Express's bare
+// "Cannot GET /" 404 page - which looks like a broken deployment even when
+// the server is perfectly healthy. This route turns that moment into a
+// confirmation, and it tells the visitor exactly where the API lives.
+app.get("/", (req, res) => {
+    res.status(200).json({
+        service: "todo-backend",
+        status: "running",
+        endpoints: {
+            health: "/health",
+            todos: "/todo",
+        },
+    });
+});
+
 // CORS: the React app runs on http://localhost:5173 and the API on :8001.
 // Without this, the browser blocks every fetch as a cross-origin request.
 app.use(cors());
@@ -1400,6 +1417,8 @@ Base URL: `http://localhost:8001/todo`
 
 | Method | Path        | Request body                    | Success | Response                        |
 | ------ | ----------- | ------------------------------- | ------- | ------------------------------- |
+| GET    | `/`         | —                               | 200     | `{"service":"todo-backend","status":"running","endpoints":{...}}` |
+| GET    | `/health`   | —                               | 200     | `{"status":"ok","database":"connected"}` (503 if the DB is down) |
 | GET    | `/todo`     | —                               | 200     | `[{...todo}, ...]`              |
 | GET    | `/todo/:id` | —                               | 200     | `{...todo}`                     |
 | GET    | `/todo/:id` | — (unknown id)                  | 404     | `{"message":"Todo not found"}`   |
@@ -1410,6 +1429,13 @@ Base URL: `http://localhost:8001/todo`
 
 **Status code policy (Module 3):** `200` read/update, `201` created, `404` not found,
 `500` unexpected server error (never with a stack trace in the body).
+
+> **Why is there a route at `/`?** Because the first thing anyone does with a deployed API is open
+> its URL in a browser — and Express's default answer for an unknown path is the bare text
+> `Cannot GET /`. That page looks exactly like a broken deployment, and it sent one of us
+> hunting for a failure that did not exist: the server was healthy the whole time, the route
+> simply was not there. A one-line root route turns that moment into a confirmation. It is the
+> cheapest possible "fail loudly, in the place the user is looking".
 
 ---
 
@@ -1466,6 +1492,8 @@ Run this before you demo. All of it is verified working.
 | T21 | `3 high severity vulnerabilities` after `npm install` | `nodemon → chokidar → braces`. Dev-only, never loaded in production | **Do not** run `npm audit fix --force` — it downgrades nodemon to a 2017 release. This project uses `node --watch` instead, so there is nothing to fix |
 | T22 | `querySrv ECONNREFUSED _mongodb._tcp.<cluster>.mongodb.net` — but the browser and `nslookup` resolve the same name fine | Node's DNS client (c-ares) was pointed at `127.0.0.1`, where a stub resolver — Windows Internet Connection Sharing / "Mobile hotspot" — closes the connection instead of answering | Add `DNS_SERVERS=8.8.8.8,202.88.156.6` to `.env` — see Step 2.3. Or turn off Mobile Hotspot, or set a static DNS server on the adapter. Diagnose with `node -e "require('node:dns').getServers()"` |
 | T23 | `Authentication failed` even though the password is correct | The SRV string was cut short by an unencoded `@`, `:` or `/` in the password | Percent-encode it: `@` → `%40`, `:` → `%3A`, `/` → `%2F` — see T19 |
+| T24 | The browser shows a plain **"Cannot GET /"** page at the deployed backend URL | Not an error — it is Express's default 404 for an unmounted path. The router is mounted at `/todo`, and `/` was not a route | Open `/health` or `/todo` instead. This build now also serves a friendly JSON at `/` so the root URL confirms itself |
+| T25 | `todo-backend.onrender.com` does not resolve, but the dashboard shows a URL | The name `todo-backend` was already taken, so Render appended a suffix (`todo-backend-1bri.onrender.com`) | Copy the exact URL from the Render dashboard — the service name is only a suggestion |
 
 ---
 
@@ -1603,6 +1631,70 @@ const API = import.meta.env.VITE_API_URL || "http://localhost:8001/todo";
 Vite only exposes variables prefixed with `VITE_` to the browser, and it **inlines them at build
 time** — they are public, so never put a secret here. A database password must stay on the server.
 
+#### Why does the backend need a different host? (and why is the URL `.onrender.com`?)
+
+`onrender.com` is **not a Netlify requirement**. It is simply the subdomain Render auto-assigns to
+a web service named `todo-backend`. Name the service `todo-api` and you get `todo-api.onrender.com`.
+**Any public HTTPS URL works** — Railway, Fly.io, an EC2 box, a DigitalOcean droplet, even an
+`ngrok` tunnel from a classroom laptop.
+
+What Netlify gives you is **static hosting**: it builds your files and serves them from a CDN. It
+does not run a Node.js process that stays alive. Three things an Express + MongoDB backend needs
+that static hosting does not provide:
+
+| What the backend needs | Why | Netlify static hosting |
+| ---------------------- | --- | ----------------------- |
+| A **long-running process** | `app.listen(8001)` must be alive to answer requests at any moment | The build container is destroyed after the deploy |
+| An **open inbound port** | The server must accept TCP connections from the internet | Only the CDN's HTTPS listener on 443 is exposed |
+| A **warm connection pool** | Mongoose keeps sockets to Atlas open between requests | Nothing survives between requests |
+
+Netlify's own support guide is blunt about the first one — *"How do I run a server/database at
+Netlify? … the answer is: you can't!"* — and lists the three ways out: adjust the code to
+serverless functions, host the back-end elsewhere and proxy to it, or host the whole app elsewhere.
+
+> **The accurate version, and the one worth teaching: Netlify *can* host an Express app — as a
+> serverless function.** Netlify publishes an official recipe: wrap the app with `serverless-http`,
+> export a handler from `netlify/functions/api.js`, and add a rewrite `from = "/api/*"`,
+> `to = "/.netlify/functions/api/:splat"`, `status = 200`. It works.
+>
+> It is also a different programming model, and it is **not** what this course wants to teach. A
+> Netlify Function has a hard **10-second execution limit** (26 s on paid plans), is created and
+> destroyed around each request, keeps no memory between requests, and scales to zero when idle.
+> Five things in an ordinary Express app break immediately:
+>
+> 1. **In-memory state** — a session store, a rate limiter, a cache in a module-level variable.
+> 2. **WebSockets and server-sent events** — a function answers a request and exits; it cannot
+>    hold a socket open.
+> 3. **Long requests** — anything slower than the limit is killed mid-flight.
+> 4. **Background work** — `setInterval`, a queue consumer. When the response is sent, the
+>    instance can be frozen or destroyed.
+> 5. **Database connection pools** — and this one bites *this* app specifically. Mongoose opens a
+>    pool of sockets to Atlas and keeps them. In a serverless world every cold start opens a new
+>    pool; enough cold starts and you exhaust Atlas's connection limit. The fix is the Atlas
+>    **Serverless Driver** (`mongodb://` with `retryWrites=false`) — more configuration, more
+>    concepts, and a different failure mode than the one this course is about.
+>
+> Note the fourth point: this app's `connectDB()` runs at module load, which in a serverless world
+> is exactly the wrong place — the connection happens on a cold start and eats into the execution
+> budget, and the pool is thrown away the moment the response is sent.
+>
+> **The teaching point:** the split is not a Netlify limitation to work around — it *is* the
+> architecture. Static assets want a CDN; a stateful API wants a process that stays up. Every real
+> MERN deployment looks like this, and being able to explain *why* is worth more than being able
+> to do it in either place.
+>
+> **Classroom shortcut (no cloud account needed for the backend).** Run the backend on your laptop
+> and put a tunnel in front of it:
+>
+> ```bash
+> ngrok http 8001        # -> https://a1b2c3.ngrok-free.app
+> ```
+>
+> Then set `VITE_API_URL` to that URL on Netlify. The frontend is hosted, the backend is running on
+> the machine in front of the class, and the whole thing costs nothing. It also produces the most
+> instructive failure of the course — when the laptop sleeps, the site breaks, and the students see
+> that a "deployed" frontend still depends on something being alive somewhere.
+
 ### Step 11.3 — Deploy the frontend to Netlify
 
 Create `netlify.toml` at the **repository root**:
@@ -1716,6 +1808,16 @@ returns 500s; point it at `/health` and the platform sees a **503** and replaces
    ```
    On the free plan the first request after a period of inactivity can take **30–50 seconds** while
    the instance spins up. That is the free tier, not a hang.
+
+> **Copy the URL from the dashboard, do not type it from memory.** `name: todo-backend` in
+> `render.yaml` is a *suggestion*. If that name is already taken on Render, it appends a suffix —
+> you get `todo-backend-1bri.onrender.com`, not `todo-backend.onrender.com`. The dashboard is the
+> only place that knows which one you actually got, and `VITE_API_URL` must match it exactly.
+
+> **"Cannot GET /" is not a failure.** Opening the backend's root URL in a browser shows Express's
+> default 404 for an unmounted path, because the router is mounted at `/todo`. The server is
+> working. Check `/health`. This build also serves a small JSON at `/` so the root URL confirms
+> itself instead of looking broken.
 
 > **If `/health` returns `503` or the log says `Could not reach the database. Giving up.`,** the
 > backend is up and the *database* is the problem. Check the Atlas **Network Access** list

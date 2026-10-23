@@ -10,6 +10,23 @@ dotenv.config();
 
 const app = express();
 
+// A friendly root route.
+//
+// Without this, opening the deployed URL in a browser shows Express's bare
+// "Cannot GET /" 404 page - which looks like a broken deployment even when
+// the server is perfectly healthy. This route turns that moment into a
+// confirmation, and it tells the visitor exactly where the API lives.
+app.get("/", (req, res) => {
+    res.status(200).json({
+        service: "todo-backend",
+        status: "running",
+        endpoints: {
+            health: "/health",
+            todos: "/todo",
+        },
+    });
+});
+
 // CORS: the React app runs on http://localhost:5173 and the API on :8001.
 // Without this, the browser blocks every fetch as a cross-origin request.
 app.use(cors());
