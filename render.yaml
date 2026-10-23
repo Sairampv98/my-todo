@@ -11,6 +11,7 @@ services:
   - type: web
     name: todo-backend
     runtime: node
+    plan: free
     rootDir: backend
     buildCommand: npm install
     startCommand: npm start
