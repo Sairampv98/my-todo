@@ -1,16 +1,45 @@
-# React + Vite
+# Frontend — React + Vite
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The React half of the MERN Todo app. This folder is an **npm workspace** of the parent project,
+so its dependencies are installed by the root `package.json`.
 
-Currently, two official plugins are available:
+```bash
+# from the repository ROOT
+npm install          # installs this workspace and the backend one
+npm run dev:frontend # vite → http://localhost:5173
+npm run build        # → frontend/dist/  (what Netlify/Vercel publish)
+```
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## What lives here
 
-## React Compiler
+| File | Purpose |
+| ---- | ------- |
+| `src/App.jsx` | The entire UI — `useState`, `useEffect`, Axios calls, the list, the View panel and the inline Edit form |
+| `src/App.css` | Component styles: the list preview clamp and the expanded View/Edit panel |
+| `src/index.css` | Global styles: font, colours, background |
+| `src/main.jsx` | React entry point (unchanged from the Vite scaffold) |
+| `index.html` | The page shell; `<title>My Todo App</title>` |
+| `vite.config.js` | Vite config — uses `@vitejs/plugin-react` |
+| `vercel.json` | Vercel build settings (Root Directory = `frontend`) |
 
-The React Compiler is currently not compatible with SWC. See [this issue](https://github.com/vitejs/vite-plugin-react/issues/428) for tracking the progress.
+## Two notes worth knowing
 
-## Expanding the ESLint configuration
+**The build plugin is Babel, not SWC.** Vite offers `@vitejs/plugin-react` (Babel, pure JavaScript)
+and `@vitejs/plugin-react-swc` (a native Rust binary). This project uses the Babel one on purpose:
+`@swc/core` needs a platform-specific native module, and `@swc/core@1.16.x` cannot load at all on
+Windows because it rejects the standard AppContainer permissions on `C:\`. A pure-JavaScript plugin
+builds identically on Windows, macOS, Linux and on Netlify/Vercel's CI.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+**The API URL is an environment variable.**
+
+```javascript
+const API = import.meta.env.VITE_API_URL || "http://localhost:8001/todo";
+```
+
+Locally it falls back to port 8001. In production, set `VITE_API_URL` in the Netlify/Vercel
+environment settings. Vite inlines `VITE_`-prefixed variables into the bundle at build time, so
+they are **public** — never put a secret in one.
+
+---
+
+Full documentation: [`../RECREATE.md`](../RECREATE.md) · [`../README.md`](../README.md)

@@ -3,7 +3,32 @@ import axios from "axios";
 import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
 
-const API = "http://localhost:8001/todo";
+// The API base URL.
+//
+// Locally it falls back to the Express server on port 8001. In production you
+// set VITE_API_URL to the ORIGIN of the deployed backend, for example
+// https://todo-backend.onrender.com - the app appends /todo itself, so the
+// variable never needs a path.
+//
+// Vite inlines VITE_ variables at BUILD time. So the variable must exist in
+// the hosting platform's build environment, and the site must be REBUILT after
+// you add or change it. Setting it only in the "Runtime" scope is not enough.
+const API_BASE = import.meta.env.VITE_API_URL;
+const API = `${API_BASE || "http://localhost:8001"}/todo`;
+
+// A missing build-time variable is invisible until someone loads the page and
+// sees an empty list. In a production build, no VITE_API_URL means the app is
+// about to call http://localhost:8001 - a server that only exists on the
+// machine that built it. So we say so, loudly, instead of failing quietly.
+//
+// The check skips localhost on purpose: when you preview a production build
+// locally (npm run build, then npm run preview), http://localhost:8001 IS the
+// backend, and warning about it would be wrong. On a deployed site the
+// hostname is never localhost, so the warning always appears where it matters.
+const MISSING_API_URL =
+  import.meta.env.PROD &&
+  !API_BASE &&
+  !window.location.hostname.startsWith("localhost");
 
 export default function App() {
   const [todos, setTodos] = useState([]);
@@ -16,13 +41,19 @@ export default function App() {
   const [editNote, setEditNote] = useState("");
   const [editContent, setEditContent] = useState("");
 
+  // The last API failure, shown in the page. Without this, a failed request
+  // and an empty database look exactly the same: a blank list.
+  const [error, setError] = useState("");
+
   // Read - GET all todos from the API and store them in state.
   const fetchTodos = async () => {
     try {
       const res = await axios.get(API);
       setTodos(res.data);
+      setError("");
     } catch (err) {
       console.error("Error fetching todos:", err.message);
+      setError(err.message);
     }
   };
 
@@ -39,9 +70,11 @@ export default function App() {
       await axios.post(API, { note: newTodo, content });
       setNewTodo("");
       setContent("");
+      setError("");
       fetchTodos();
     } catch (err) {
       console.error("Error adding todo:", err.message);
+      setError(err.message);
     }
   };
 
@@ -70,9 +103,11 @@ export default function App() {
         content: editContent,
       });
       cancelEdit();
+      setError("");
       fetchTodos();
     } catch (err) {
       console.error("Error updating todo:", err.message);
+      setError(err.message);
     }
   };
 
@@ -85,15 +120,36 @@ export default function App() {
   const deleteTodo = async (id) => {
     try {
       await axios.delete(`${API}/${id}`);
+      setError("");
       fetchTodos();
     } catch (err) {
       console.error("Error deleting todo:", err.message);
+      setError(err.message);
     }
   };
 
   return (
     <div className="container py-4" style={{ maxWidth: 720 }}>
       <h1 className="text-center mb-4">My Todo App</h1>
+
+      {/* A configuration mistake must not look like an empty database. */}
+      {MISSING_API_URL && (
+        <div className="alert alert-danger">
+          <strong>Configuration error.</strong> <code>VITE_API_URL</code> was not set
+          when this site was built, so the app is trying to call{" "}
+          <code>http://localhost:8001</code> — a server that exists only on the
+          machine that built it. Set <code>VITE_API_URL</code> in your host&apos;s
+          build environment (on Netlify: <em>Site configuration → Environment
+          variables</em>, scope <em>Builds</em>), then redeploy the site.
+        </div>
+      )}
+
+      {/* The API is unreachable — say so, instead of showing an empty list. */}
+      {error && (
+        <div className="alert alert-warning">
+          <strong>Could not reach the API.</strong> <code>{error}</code>
+        </div>
+      )}
 
       <form onSubmit={addTodo} className="card p-3 mb-4 shadow-sm">
         <div className="mb-2">

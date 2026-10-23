@@ -1,0 +1,23 @@
+# Netlify deployment - the React frontend only.
+#
+# Netlify reads this file automatically when you connect the repository.
+# The backend is NOT deployed here - it runs on Render (see render.yaml).
+#
+# Netlify runs the build command INSIDE the base directory, and resolves the
+# publish directory RELATIVE TO THE BASE DIRECTORY. So with base = "frontend"
+# and publish = "dist", Netlify publishes frontend/dist.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Single-page application: every unknown path is served by index.html so that
+# React Router routes (added in Module 6) work on a hard refresh.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

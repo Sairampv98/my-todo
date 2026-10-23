@@ -1,0 +1,22 @@
+# Render deployment - the Express backend only.
+#
+# Connect this repository to Render as a Blueprint and it will create the
+# web service for you. The frontend is deployed separately on Netlify or Vercel.
+#
+# MONGO_URI is deliberately NOT hardcoded: set it in the Render dashboard
+# (Environment tab) to your MongoDB Atlas connection string. sync: false means
+# Render will prompt you for the value instead of taking it from this file.
+
+services:
+  - type: web
+    name: todo-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: MONGO_URI
+        sync: false
