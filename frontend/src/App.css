@@ -1,0 +1,36 @@
+.list-group-item {
+  transition: background-color 0.2s ease;
+}
+
+.list-group-item:hover {
+  background-color: #f1f3f5;
+}
+
+/* The list shows a short preview of the content (2 lines max).
+   The full content is always available through the View button. */
+.todo-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: #495057;
+  font-size: 0.925rem;
+}
+
+/* The expanded View / Edit panel. */
+.todo-details {
+  background-color: #eef2f7;
+  border: 1px solid #ced4da;
+  border-left: 4px solid #0d6efd;
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  line-height: 1.55;
+}
+
+button {
+  transition: transform 0.1s ease, background-color 0.2s ease;
+}
+
+button:active {
+  transform: scale(0.97);
+}
